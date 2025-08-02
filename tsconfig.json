@@ -1,0 +1,38 @@
+{
+  "compilerOptions": {
+    /* Base Options: */
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "target": "es2022",
+    "allowJs": true,
+    "resolveJsonModule": true,
+    "moduleDetection": "force",
+    "isolatedModules": true,
+
+    /* Strictness */
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "checkJs": true,
+
+    /* Module settings for a Node.js package */
+    "moduleResolution": "node",
+    "module": "CommonJS",
+    
+    /* Output settings */
+    "outDir": "dist",
+    "sourceMap": true,
+    "declaration": true, // Generate .d.ts files for types
+    "declarationMap": true,
+
+    /* Library settings - THIS IS THE FIX */
+    // "es2022" provides modern JS syntax.
+    // "dom" is not needed for a Node.js library, but including it would also add setTimeout.
+    // However, the best practice is to rely on @types/node.
+    "lib": ["es2022"],
+
+    /* Type Definitions - THIS IS THE FIX */
+    // Explicitly tells TypeScript to include Node.js global types like setTimeout.
+    "types": ["node"]
+  },
+  "include": ["src"] // Only compile files in the src folder
+}

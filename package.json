@@ -1,0 +1,38 @@
+{
+  "name": "trustbroker-client",
+  "version": "1.1.1",
+  "description": "Official Client SDK for the TrustBroker Data Exchange Platform.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/your-username/trustbroker-client.git"
+  },
+  "keywords": [
+    "trustbroker",
+    "data-exchange",
+    "api",
+    "sdk"
+  ],
+  "author": "Your Company Name <contact@yourcompany.com>",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/your-username/trustbroker-client/issues"
+  },
+  "homepage": "https://github.com/your-username/trustbroker-client#readme",
+  "dependencies": {
+    "axios": "^1.6.8"
+  },
+  "devDependencies": {
+    "@types/node": "^24.1.0",
+    "typescript": "^5.4.5"
+  },
+  "files": [
+    "dist"
+  ]
+}
