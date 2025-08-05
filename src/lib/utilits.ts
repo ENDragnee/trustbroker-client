@@ -38,7 +38,7 @@ export function delay(ms: number): Promise<void> {
  * Signs a payload using a private key.
  * Returns the Base64-encoded signature.
  */
-export function signPayload(payload: object, privateKeyPem: string): string {
+export function signPayload(payload: object|string, privateKeyPem: string): string {
   const canonical = JSON.stringify(payload, Object.keys(payload).sort());
   const signer = crypto.createSign('RSA-SHA256');
   signer.update(canonical);

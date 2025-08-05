@@ -33,8 +33,8 @@ export interface TrustBrokerClientOptions {
 
 export class TrustBrokerClient extends EventEmitter {
   private clientId: string;
-  private publicKey: String;
-  private privateKey: String;
+  private publicKey: string;
+  private privateKey: string;
   private http: AxiosInstance;
   private logger?: TrustBrokerClientOptions['logger'];
 
@@ -60,7 +60,7 @@ constructor(options?: TrustBrokerClientOptions) {
   this.http.interceptors.request.use((config: InternalAxiosRequestConfig) => {
     config.headers = config.headers ?? {};
     config.headers['Client-Id'] = this.clientId;
-    const signature = signPayload(this.privateKey, this.clientId);
+    const signature = signPayload(this.clientId, this.privateKey);
     config.headers['Signature'] = signature;
     return config;
   });
