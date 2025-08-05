@@ -1,8 +1,5 @@
-import {
-  createSign,
-  createVerify,
-  KeyObject,
-} from 'crypto';
+
+import crypto from 'crypto';
 import { SignatureError } from './errors';
 
 /**
@@ -41,34 +38,24 @@ export function delay(ms: number): Promise<void> {
  * Signs a payload using a private key.
  * Returns the Base64-encoded signature.
  */
-export function signPayload(
-  privateKey: KeyObject,
-  payload: object | string | Buffer
-): string {
-  try {
-    const buffer = toBuffer(payload);
-    const signer = createSign('SHA256');
-    signer.update(buffer);
-    return signer.sign(privateKey, 'base64');
-  } catch (err) {
-    throw new SignatureError('SIGNING_FAILED', (err as Error).message);
-  }
+export function signPayload(payload: object, privateKeyPem: string): string {
+  const canonical = JSON.stringify(payload, Object.keys(payload).sort());
+  const signer = crypto.createSign('RSA-SHA256');
+  signer.update(canonical);
+  signer.end();
+  return signer.sign(privateKeyPem, 'base64');
 }
+
 
 /**
  * Verifies a payload's signature using a public key.
  */
-export function verifySignature(
-  publicKey: KeyObject,
-  payload: object | string | Buffer,
-  signature: string
-): boolean {
-  try {
-    const buffer = toBuffer(payload);
-    const verifier = createVerify('SHA256');
-    verifier.update(buffer);
-    return verifier.verify(publicKey, signature, 'base64');
-  } catch (err) {
-    throw new SignatureError('VERIFICATION_FAILED', (err as Error).message);
-  }
+
+export function verifySignature( payload: object|string, signature: string, publicKey: string) {
+  const canonical = JSON.stringify(payload, Object.keys(payload).sort());
+  const verifier = crypto.createVerify('RSA-SHA256');
+  verifier.update(canonical);
+  verifier.end();
+  const publicKeyPem = Buffer.from(publicKey, 'base64').toString('utf8');
+  return verifier.verify(publicKeyPem, signature, 'base64');
 }

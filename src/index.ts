@@ -33,8 +33,8 @@ export interface TrustBrokerClientOptions {
 
 export class TrustBrokerClient extends EventEmitter {
   private clientId: string;
-  private publicKey: KeyObject;
-  private privateKey: KeyObject;
+  private publicKey: String;
+  private privateKey: String;
   private http: AxiosInstance;
   private logger?: TrustBrokerClientOptions['logger'];
 
@@ -51,8 +51,8 @@ constructor(options?: TrustBrokerClientOptions) {
   }
 
   this.clientId = TB_CLIENT_ID;
-  this.publicKey = createPublicKey(TB_PUBLIC_KEY);
-  this.privateKey = createPrivateKey(TB_PRIVATE_KEY);
+  this.publicKey = Buffer.from(TB_PUBLIC_KEY, 'base64').toString('utf8');
+  this.privateKey = Buffer.from(TB_PRIVATE_KEY, 'base64').toString('utf8');
 
   const baseURL = (TB_BROKER_URL || 'https://broker.trustbroker.io').replace(/\/+$/, '');
   this.http = axios.create({ baseURL });
