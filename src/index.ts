@@ -1,13 +1,7 @@
-import path from "path";
-import axios, {
-  AxiosInstance,
-  AxiosRequestConfig,
-  InternalAxiosRequestConfig,
-} from "axios";
-import { KeyObject, createPrivateKey, createPublicKey } from "crypto";
+import axios, { AxiosInstance, InternalAxiosRequestConfig } from "axios";
 import { InitializationError, RequestError } from "./lib/errors";
 import EventEmitter from "events";
-import { canonicalizeBody, delay, signPayload } from "./lib/utilits";
+import { delay, signPayload } from "./lib/utilits";
 
 export interface RequestDataParams {
   ownerExternalId: string;
@@ -18,6 +12,25 @@ export interface RequestDataParams {
   timeoutMs?: number;
   abortSignal?: AbortSignal;
 }
+
+export interface RequestStatusResponse {
+  requestId: string;
+  status: string;
+  platformSignature?: string;
+  providerEndpoint?: string;
+}
+
+export interface ProviderDataResponse {
+  signature: string;
+  requestId: string;
+  data: any;
+}
+
+export interface CompleteRequestResponse {
+  requestId: string;
+  status: string; // e.g. "COMPLETED"
+}
+
 
 export interface TrustBrokerClientOptions {
   logger?: {
@@ -71,89 +84,6 @@ export class TrustBrokerClient extends EventEmitter {
     return this.clientId;
   }
 
-  /**
-   * Initiate a new data request.
-   */
-  public async initiateRequest(
-    params: Omit<
-      RequestDataParams,
-      "pollingIntervalMs" | "timeoutMs" | "abortSignal"
-    >
-  ): Promise<{ requestId: string }> {
-    try {
-      const { data } = await this.http.post("/requests", params);
-      return data;
-    } catch (err) {
-      this.handleApiError(err, "initiateRequest");
-    }
-  }
-
-  /**
-   * Poll for consent until approved, then return endpoint & token.
-   */
-  public async pollForConsent(
-    requestId: string,
-    opts: Pick<
-      RequestDataParams,
-      "pollingIntervalMs" | "timeoutMs" | "abortSignal"
-    > = {}
-  ): Promise<{ providerEndpoint: string; accessToken: string }> {
-    const interval = opts.pollingIntervalMs ?? 3000;
-    const timeout = opts.timeoutMs ?? 120000;
-    const start = Date.now();
-
-    while (Date.now() - start < timeout) {
-      if (opts.abortSignal?.aborted) {
-        throw new RequestError("ABORTED", "Polling aborted by signal");
-      }
-      try {
-        const { data } = await this.http.get(`/requests/${requestId}/token`);
-        this.emit("statusChanged", { requestId, status: data.status });
-        if (data.status === "APPROVED") {
-          return {
-            providerEndpoint: data.providerEndpoint,
-            accessToken: data.accessToken,
-          };
-        }
-        if (["DENIED", "FAILED", "EXPIRED"].includes(data.status)) {
-          throw new RequestError(
-            data.status,
-            data.failureReason || data.status
-          );
-        }
-      } catch (err) {
-        if (err instanceof RequestError) throw err;
-        this.handleApiError(err, "pollForConsent");
-      }
-      await delay(interval);
-    }
-    throw new RequestError("TIMED_OUT", "User consent polling timed out");
-  }
-
-  /**
-   * Fetch actual data from provider endpoint.
-   */
-  public async fetchFromProvider<T>(
-    endpoint: string,
-    token: string
-  ): Promise<T> {
-    try {
-      const { data } = await axios.post<T>(
-        endpoint,
-        {},
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      this.emit("completed", { endpoint });
-      return data;
-    } catch (err) {
-      const status = axios.isAxiosError(err) ? err.response?.status : undefined;
-      throw new RequestError("FETCH_FAILED", `Fetch error ${status || ""}`);
-    }
-  }
-
-  /**
-   * Fetch institution information for the authenticated client.
-   */
   public async getMyInstitution(): Promise<any> {
     try {
       const { data } = await this.http.get("/institution/me");
@@ -163,12 +93,137 @@ export class TrustBrokerClient extends EventEmitter {
     }
   }
 
-  public async getMyPublicKey(): Promise<any> {
+    public async getInstitutionById(id: string): Promise<any> {
+    try {
+      const { data } = await this.http.get("/institution/" + id);
+      return data;
+    } catch (err) {
+      this.handleApiError(err, "getMyInstitution");
+    }
+  }
+
+  public async getPublicKey(): Promise<string> {
     try {
       const { data } = await this.http.get("/system/public-key");
       return data;
     } catch (err) {
       this.handleApiError(err, "getMyInstitution");
+    }
+  }
+
+  public async createDataRequest(params: {
+    providerId: string;
+    dataOwnerId: string;
+    schemaId: string;
+    relationshipId?: string;
+    expiresAt?: string;
+  }): Promise<{
+    requestId: string;
+    status: string;
+    // any other fields the broker returns
+  }> {
+    // 1. Build the raw payload
+    const payload = {
+      requesterId: this.clientId, // your client ID
+      providerId: params.providerId,
+      dataOwnerId: params.dataOwnerId,
+      dataSchemaId: params.schemaId,
+      relationshipId: params.relationshipId,
+      expiresAt: params.expiresAt,
+      signature: "", // placeholder
+    };
+    const serialized = JSON.stringify({
+      ...payload,
+      signature: undefined, // sign only the data fields
+    });
+    payload.signature = signPayload(serialized, this.privateKey);
+
+    try {
+      // 4. POST to /requests (or whatever endpoint your broker uses)
+      const { data } = await this.http.post("/requests", payload);
+      return data;
+    } catch (err) {
+      this.handleApiError(err, "createDataRequest");
+    }
+  }
+
+  /**
+   * Get status of a specific data request.
+   */
+  public async getRequestStatus(
+    requestId: string
+  ): Promise<RequestStatusResponse> {
+    try {
+      const { data } = await this.http.get(`/requests/${requestId}`);
+      return data;
+    } catch (err) {
+      this.handleApiError(err, "getRequestStatus");
+    }
+  }
+
+  public async requestDataFromProvider(
+    requestId: string,
+    platformSignature: string,
+    mySignature: string,
+    providerEndpoint: string
+  ): Promise<ProviderDataResponse> {
+    // 2. Canonicalize and sign it
+    const body = {
+      requesterId: this.clientId,
+      platformSignature,
+      requestId,
+      signature: mySignature,
+    };
+
+    try {
+      // 3. POST to the provider directly
+      const { data } = await axios.post<ProviderDataResponse>(
+        providerEndpoint,
+        body,
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
+      );
+      return data;
+    } catch (err) {
+
+      if (axios.isAxiosError(err) && err.response) {
+        throw new RequestError(
+          "PROVIDER_ERROR",
+          `requestDataFromProvider: ${err.response.data?.error || err.message}`
+        );
+      }
+      throw new RequestError(
+        "UNKNOWN",
+        `requestDataFromProvider: ${(err as Error).message}`
+      );
+    }
+  }
+
+   public async submitRequesterSignature(
+    requestId: string,
+    providerId: string,
+    providerSignature: string,
+    platformSignature: string,
+    requesterSignature: string
+  ): Promise<CompleteRequestResponse> {
+    const body = {
+      providerId,
+      providerSignature,
+      platformSignature,
+      requesterSignature,
+    };
+
+    try {
+      const { data } = await this.http.post<CompleteRequestResponse>(
+        `/requests/${requestId}/requester-signature`,
+        body
+      );
+      return data;
+    } catch (err) {
+      this.handleApiError(err, "submitRequesterSignature");
     }
   }
 
