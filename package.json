@@ -4,7 +4,7 @@
   "description": "Official Client SDK for the TrustBroker Data Exchange Platform.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "type": "module",
+  "type": "commonjs",
   "scripts": {
     "build": "tsc",
     "prepublishOnly": "npm run build",
