@@ -129,6 +129,18 @@ export class TrustBrokerClient extends EventEmitter {
     }
   }
 
+  /**
+ * Fetch institution information for the authenticated client.
+ */
+public async getMyInstitution(): Promise<any> {
+  try {
+    const { data } = await this.http.get('/institution/me');
+    return data;
+  } catch (err) {
+    this.handleApiError(err, 'getMyInstitution');
+  }
+}
+
   private handleApiError(err: unknown, context: string): never {
     if (axios.isAxiosError(err) && err.response) {
       const msg = err.response.data?.error || err.message;
