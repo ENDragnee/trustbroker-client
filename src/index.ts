@@ -1,7 +1,7 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig } from "axios";
 import { InitializationError, RequestError } from "./lib/errors";
 import EventEmitter from "events";
-import { delay, signPayload } from "./lib/utilits";
+import { delay, signPayload, verifySignature } from "./lib/utilits";
 
 export interface RequestDataParams {
   ownerExternalId: string;
@@ -30,7 +30,6 @@ export interface CompleteRequestResponse {
   requestId: string;
   status: string; // e.g. "COMPLETED"
 }
-
 
 export interface TrustBrokerClientOptions {
   logger?: {
@@ -93,7 +92,7 @@ export class TrustBrokerClient extends EventEmitter {
     }
   }
 
-    public async getInstitutionById(id: string): Promise<any> {
+  public async getInstitutionById(id: string): Promise<any> {
     try {
       const { data } = await this.http.get("/institution/" + id);
       return data;
@@ -188,7 +187,6 @@ export class TrustBrokerClient extends EventEmitter {
       );
       return data;
     } catch (err) {
-
       if (axios.isAxiosError(err) && err.response) {
         throw new RequestError(
           "PROVIDER_ERROR",
@@ -202,7 +200,7 @@ export class TrustBrokerClient extends EventEmitter {
     }
   }
 
-   public async submitRequesterSignature(
+  public async submitRequesterSignature(
     requestId: string,
     providerId: string,
     providerSignature: string,
@@ -225,6 +223,25 @@ export class TrustBrokerClient extends EventEmitter {
     } catch (err) {
       this.handleApiError(err, "submitRequesterSignature");
     }
+  }
+
+  public signPayload(payload: any): string {
+    const serialized =
+      typeof payload === "string" ? payload : JSON.stringify(payload);
+    return signPayload(serialized, this.privateKey);
+  }
+
+  /**
+   * Verify a signature against a payload using the given public key.
+   */
+  public verifyPayloadSignature(
+    payload: any,
+    signature: string,
+    publicKey: string
+  ): boolean {
+    const serialized =
+      typeof payload === "string" ? payload : JSON.stringify(payload);
+    return verifySignature(serialized, signature, publicKey);
   }
 
   private handleApiError(err: unknown, context: string): never {
