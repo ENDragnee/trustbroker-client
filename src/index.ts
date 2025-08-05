@@ -5,15 +5,12 @@ import {
   createPrivateKey,
   createPublicKey,
 } from 'crypto';
-import dotenv from 'dotenv';
 import {
   InitializationError,
   RequestError,
 } from './lib/errors';
 import EventEmitter from 'events';
 import { canonicalizeBody, delay, signPayload } from './lib/utilits';
-
-dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
 export interface RequestDataParams {
   ownerExternalId: string;
@@ -41,31 +38,37 @@ export class TrustBrokerClient extends EventEmitter {
   private http: AxiosInstance;
   private logger?: TrustBrokerClientOptions['logger'];
 
-  constructor(options: TrustBrokerClientOptions = {}) {
-    super();
-    this.logger = options.logger;
+constructor(options?: TrustBrokerClientOptions) {
+  super();
 
-    const { TB_CLIENT_ID, TB_PUBLIC_KEY, TB_PRIVATE_KEY, TB_BROKER_URL } = process.env;
-    if (!TB_CLIENT_ID || !TB_PUBLIC_KEY || !TB_PRIVATE_KEY) {
-      throw new InitializationError('Missing credentials in .env');
-    }
-    this.clientId = TB_CLIENT_ID;
-    this.publicKey = createPublicKey(TB_PUBLIC_KEY);
-    this.privateKey = createPrivateKey(TB_PRIVATE_KEY);
-    const baseURL = (TB_BROKER_URL || 'https://broker.trustbroker.io').replace(/\/+$/, '');
+  // Use default logger or none
+  this.logger = options?.logger ?? undefined;
 
-    this.http = axios.create({ baseURL });
-    // Correctly type the interceptor to use InternalAxiosRequestConfig
-    this.http = axios.create({ baseURL });
-    this.http.interceptors.request.use((config: InternalAxiosRequestConfig) => {
-      config.headers = config.headers ?? {};
-      // Always attach Client-Id header
-      config.headers['Client-Id'] = this.clientId;
-      const signature = signPayload(this.privateKey, this.clientId);
-      config.headers['Signature'] = signature;
+  const { TB_CLIENT_ID, TB_PUBLIC_KEY, TB_PRIVATE_KEY, TB_BROKER_URL } = process.env;
 
-      return config;
-    });
+  if (!TB_CLIENT_ID || !TB_PUBLIC_KEY || !TB_PRIVATE_KEY) {
+    throw new InitializationError('Missing credentials in .env');
+  }
+
+  this.clientId = TB_CLIENT_ID;
+  this.publicKey = createPublicKey(TB_PUBLIC_KEY);
+  this.privateKey = createPrivateKey(TB_PRIVATE_KEY);
+
+  const baseURL = (TB_BROKER_URL || 'https://broker.trustbroker.io').replace(/\/+$/, '');
+  this.http = axios.create({ baseURL });
+
+  this.http.interceptors.request.use((config: InternalAxiosRequestConfig) => {
+    config.headers = config.headers ?? {};
+    config.headers['Client-Id'] = this.clientId;
+    const signature = signPayload(this.privateKey, this.clientId);
+    config.headers['Signature'] = signature;
+    return config;
+  });
+}
+
+
+  public getClientId(): string {
+    return this.clientId;
   }
 
   /**
