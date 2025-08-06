@@ -1,7 +1,17 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig } from "axios";
-import { InitializationError, RequestError } from "./lib/errors";
 import EventEmitter from "events";
-import { delay, signPayload, verifySignature } from "./lib/utilits";
+// Assuming you have these in a file named `lib/utilits.ts`
+import { 
+  InitializationError, 
+  RequestError 
+} from "./lib/errors";
+import { 
+  delay, 
+  signPayload, 
+  verifySignature 
+} from "./lib/utilits"; 
+
+// --- Interfaces ---
 
 export interface RequestDataParams {
   ownerExternalId: string;
@@ -40,9 +50,10 @@ export interface TrustBrokerClientOptions {
   };
 }
 
+// --- TrustBrokerClient Class ---
+
 export class TrustBrokerClient extends EventEmitter {
   private clientId: string;
-  private publicKey: string;
   private privateKey: string;
   private http: AxiosInstance;
   private logger?: TrustBrokerClientOptions["logger"];
@@ -50,30 +61,29 @@ export class TrustBrokerClient extends EventEmitter {
   constructor(options?: TrustBrokerClientOptions) {
     super();
 
-    // Use default logger or none
     this.logger = options?.logger ?? undefined;
 
-    const { TB_CLIENT_ID, TB_PUBLIC_KEY, TB_PRIVATE_KEY, TB_BROKER_URL } =
-      process.env;
+    const { TB_CLIENT_ID, TB_PRIVATE_KEY, TB_BROKER_URL } = process.env;
 
-    if (!TB_CLIENT_ID || !TB_PUBLIC_KEY || !TB_PRIVATE_KEY) {
+    if (!TB_CLIENT_ID || !TB_PRIVATE_KEY) {
       throw new InitializationError("Missing credentials in .env");
     }
 
     this.clientId = TB_CLIENT_ID;
-    this.publicKey = Buffer.from(TB_PUBLIC_KEY, "base64").toString("utf8");
+    // The private key from .env is Base64 encoded; decode it to PEM string
     this.privateKey = Buffer.from(TB_PRIVATE_KEY, "base64").toString("utf8");
 
-    const baseURL = (TB_BROKER_URL || "https://broker.trustbroker.io").replace(
-      /\/+$/,
-      ""
-    );
+    const baseURL = (TB_BROKER_URL || "https://broker.trustbroker.io").replace(/\/+$/, "");
     this.http = axios.create({ baseURL });
 
+    // Axios Interceptor for M2M Authentication
     this.http.interceptors.request.use((config: InternalAxiosRequestConfig) => {
       config.headers = config.headers ?? {};
       config.headers["Client-Id"] = this.clientId;
+      
+      // If the request has a body, sign it and add the signature header.
       if (config.data) {
+        // This relies on the `signPayload` function in `lib/utilits.ts`
         const signature = signPayload(config.data, this.privateKey);
         config.headers["Signature"] = signature;
       }
@@ -85,6 +95,8 @@ export class TrustBrokerClient extends EventEmitter {
   public getClientId(): string {
     return this.clientId;
   }
+
+  // --- API Methods ---
 
   public async getMyInstitution(): Promise<any> {
     try {
@@ -100,48 +112,42 @@ export class TrustBrokerClient extends EventEmitter {
       const { data } = await this.http.get("/institution/" + id);
       return data;
     } catch (err) {
-      this.handleApiError(err, "getMyInstitution");
+      this.handleApiError(err, "getInstitutionById");
     }
   }
 
   public async getPublicKey(): Promise<string> {
     try {
+      // This is the platform's public key, if needed for verification purposes
       const { data } = await this.http.get("/system/public-key");
       return data;
     } catch (err) {
-      this.handleApiError(err, "getMyInstitution");
+      this.handleApiError(err, "getPublicKey");
     }
   }
 
+  /**
+   * Initiates a new data request with the Trust Broker.
+   */
   public async createDataRequest(params: {
     providerId: string;
     dataOwnerId: string;
     schemaId: string;
-    relationshipId?: string;
-    expiresAt?: string;
+    expiresIn?: number;
   }): Promise<{
     requestId: string;
     status: string;
-    // any other fields the broker returns
   }> {
-    // 1. Build the raw payload
+    // Construct the clean payload object
     const payload = {
-      requesterId: this.clientId, // your client ID
       providerId: params.providerId,
       dataOwnerId: params.dataOwnerId,
-      dataSchemaId: params.schemaId,
-      relationshipId: params.relationshipId,
-      expiresAt: params.expiresAt,
-      signature: "", // placeholder
+      schemaId: params.schemaId,
+      expiresIn: params.expiresIn || 3600,
     };
-    const serialized = JSON.stringify({
-      ...payload,
-      signature: undefined, // sign only the data fields
-    });
-    payload.signature = signPayload(serialized, this.privateKey);
 
     try {
-      // 4. POST to /requests (or whatever endpoint your broker uses)
+      // The interceptor handles signing this payload and adding the headers.
       const { data } = await this.http.post("/requests", payload);
       return data;
     } catch (err) {
@@ -169,7 +175,7 @@ export class TrustBrokerClient extends EventEmitter {
     mySignature: string,
     providerEndpoint: string
   ): Promise<ProviderDataResponse> {
-    // 2. Canonicalize and sign it
+    // The body for the request to the provider
     const body = {
       requesterId: this.clientId,
       platformSignature,
@@ -178,7 +184,7 @@ export class TrustBrokerClient extends EventEmitter {
     };
 
     try {
-      // 3. POST to the provider directly
+      // POST to the provider directly (not via the broker's HTTP instance)
       const { data } = await axios.post<ProviderDataResponse>(
         providerEndpoint,
         body,
@@ -210,6 +216,7 @@ export class TrustBrokerClient extends EventEmitter {
     platformSignature: string,
     requesterSignature: string
   ): Promise<CompleteRequestResponse> {
+    // The body for the broker's endpoint
     const body = {
       providerId,
       providerSignature,
@@ -228,22 +235,24 @@ export class TrustBrokerClient extends EventEmitter {
     }
   }
 
+  /**
+   * Utility method to sign a payload (used internally by the interceptor).
+   */
   public signPayload(payload: any): string {
-    const serialized =
-      typeof payload === "string" ? payload : JSON.stringify(payload);
+    const serialized = typeof payload === "string" ? payload : JSON.stringify(payload);
     return signPayload(serialized, this.privateKey);
   }
 
   /**
-   * Verify a signature against a payload using the given public key.
+   * Utility method to verify a signature (used internally or by clients).
    */
   public verifyPayloadSignature(
     payload: any,
     signature: string,
     publicKey: string
   ): boolean {
-    const serialized =
-      typeof payload === "string" ? payload : JSON.stringify(payload);
+    const serialized = typeof payload === "string" ? payload : JSON.stringify(payload);
+    // This relies on the `verifySignature` in `lib/utilits.ts`
     return verifySignature(serialized, signature, publicKey);
   }
 
