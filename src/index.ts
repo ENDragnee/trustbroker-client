@@ -73,8 +73,11 @@ export class TrustBrokerClient extends EventEmitter {
     this.http.interceptors.request.use((config: InternalAxiosRequestConfig) => {
       config.headers = config.headers ?? {};
       config.headers["Client-Id"] = this.clientId;
-      const signature = signPayload(this.clientId, this.privateKey);
-      config.headers["Signature"] = signature;
+      if (config.data) {
+        const signature = signPayload(config.data, this.privateKey);
+        config.headers["Signature"] = signature;
+      }
+      
       return config;
     });
   }
