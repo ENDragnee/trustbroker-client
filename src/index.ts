@@ -1,13 +1,7 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig } from "axios";
+import { InitializationError, RequestError } from "./lib/errors";
 import EventEmitter from "events";
-import { 
-  InitializationError, 
-  RequestError 
-} from "./lib/errors";
-// We no longer need the real signing functions for the bypass
-// import { signPayload, verifySignature } from "./lib/utilits"; 
-
-// --- Interfaces ---
+import { delay, signPayload, verifySignature } from "./lib/utilits";
 
 export interface RequestDataParams {
   ownerExternalId: string;
@@ -46,42 +40,41 @@ export interface TrustBrokerClientOptions {
   };
 }
 
-// --- TrustBrokerClient Class (Bypass Version) ---
-
 export class TrustBrokerClient extends EventEmitter {
   private clientId: string;
-  // REMOVED: privateKey is not needed in bypass mode.
-  // private privateKey: string;
+  private publicKey: string;
+  private privateKey: string;
   private http: AxiosInstance;
   private logger?: TrustBrokerClientOptions["logger"];
 
   constructor(options?: TrustBrokerClientOptions) {
     super();
 
+    // Use default logger or none
     this.logger = options?.logger ?? undefined;
 
-    // THE BYPASS: We only need the Client ID and Broker URL. Keys are ignored.
-    const { TB_CLIENT_ID, TB_BROKER_URL } = process.env;
+    const { TB_CLIENT_ID, TB_PUBLIC_KEY, TB_PRIVATE_KEY, TB_BROKER_URL } =
+      process.env;
 
-    if (!TB_CLIENT_ID) {
-      throw new InitializationError("Missing TB_CLIENT_ID in .env for bypass mode");
+    if (!TB_CLIENT_ID || !TB_PUBLIC_KEY || !TB_PRIVATE_KEY) {
+      throw new InitializationError("Missing credentials in .env");
     }
 
     this.clientId = TB_CLIENT_ID;
-    // REMOVED: No need to load or decode the private key.
-    // this.privateKey = Buffer.from(TB_PRIVATE_KEY, "base64").toString("utf8");
+    this.publicKey = Buffer.from(TB_PUBLIC_KEY, "base64").toString("utf8");
+    this.privateKey = Buffer.from(TB_PRIVATE_KEY, "base64").toString("utf8");
 
-    const baseURL = (TB_BROKER_URL || "https://broker.trustbroker.io").replace(/\/+$/, "");
+    const baseURL = (TB_BROKER_URL || "https://broker.trustbroker.io").replace(
+      /\/+$/,
+      ""
+    );
     this.http = axios.create({ baseURL });
 
-    // THE BYPASS: The interceptor now only adds the Client-Id.
-    // All signature logic has been removed.
     this.http.interceptors.request.use((config: InternalAxiosRequestConfig) => {
       config.headers = config.headers ?? {};
       config.headers["Client-Id"] = this.clientId;
-      
-      // The `Signature` header is no longer added.
-      
+      const signature = signPayload(this.clientId, this.privateKey);
+      config.headers["Signature"] = signature;
       return config;
     });
   }
@@ -89,8 +82,6 @@ export class TrustBrokerClient extends EventEmitter {
   public getClientId(): string {
     return this.clientId;
   }
-
-  // --- API Methods ---
 
   public async getMyInstitution(): Promise<any> {
     try {
@@ -106,7 +97,7 @@ export class TrustBrokerClient extends EventEmitter {
       const { data } = await this.http.get("/institution/" + id);
       return data;
     } catch (err) {
-      this.handleApiError(err, "getInstitutionById");
+      this.handleApiError(err, "getMyInstitution");
     }
   }
 
@@ -115,30 +106,39 @@ export class TrustBrokerClient extends EventEmitter {
       const { data } = await this.http.get("/system/public-key");
       return data;
     } catch (err) {
-      this.handleApiError(err, "getPublicKey");
+      this.handleApiError(err, "getMyInstitution");
     }
   }
 
-  /**
-   * Initiates a new data request with the Trust Broker.
-   */
-public async createDataRequest(params: {
+  public async createDataRequest(params: {
     providerId: string;
-    dataOwnerId: string; // This is the user's externalId
+    dataOwnerId: string;
     schemaId: string;
-    expiresIn?: number;
+    relationshipId?: string;
+    expiresAt?: string;
   }): Promise<{
     requestId: string;
     status: string;
+    // any other fields the broker returns
   }> {
+    // 1. Build the raw payload
     const payload = {
+      requesterId: this.clientId, // your client ID
       providerId: params.providerId,
       dataOwnerId: params.dataOwnerId,
-      schemaId: params.schemaId,
-      expiresIn: params.expiresIn || 3600,
+      dataSchemaId: params.schemaId,
+      relationshipId: params.relationshipId,
+      expiresAt: params.expiresAt,
+      signature: "", // placeholder
     };
+    const serialized = JSON.stringify({
+      ...payload,
+      signature: undefined, // sign only the data fields
+    });
+    payload.signature = signPayload(serialized, this.privateKey);
 
     try {
+      // 4. POST to /requests (or whatever endpoint your broker uses)
       const { data } = await this.http.post("/requests", payload);
       return data;
     } catch (err) {
@@ -146,6 +146,9 @@ public async createDataRequest(params: {
     }
   }
 
+  /**
+   * Get status of a specific data request.
+   */
   public async getRequestStatus(
     requestId: string
   ): Promise<RequestStatusResponse> {
@@ -163,23 +166,37 @@ public async createDataRequest(params: {
     mySignature: string,
     providerEndpoint: string
   ): Promise<ProviderDataResponse> {
+    // 2. Canonicalize and sign it
     const body = {
       requesterId: this.clientId,
       platformSignature,
       requestId,
-      signature: mySignature, // This signature is for provider auth, not broker auth
+      signature: mySignature,
     };
 
     try {
+      // 3. POST to the provider directly
       const { data } = await axios.post<ProviderDataResponse>(
-        providerEndpoint, body, { headers: { "Content-Type": "application/json" } }
+        providerEndpoint,
+        body,
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
       );
       return data;
     } catch (err) {
       if (axios.isAxiosError(err) && err.response) {
-        throw new RequestError("PROVIDER_ERROR", `requestDataFromProvider: ${err.response.data?.error || err.message}`);
+        throw new RequestError(
+          "PROVIDER_ERROR",
+          `requestDataFromProvider: ${err.response.data?.error || err.message}`
+        );
       }
-      throw new RequestError("UNKNOWN", `requestDataFromProvider: ${(err as Error).message}`);
+      throw new RequestError(
+        "UNKNOWN",
+        `requestDataFromProvider: ${(err as Error).message}`
+      );
     }
   }
 
@@ -199,7 +216,8 @@ public async createDataRequest(params: {
 
     try {
       const { data } = await this.http.post<CompleteRequestResponse>(
-        `/requests/${requestId}/requester-signature`, body
+        `/requests/${requestId}/requester-signature`,
+        body
       );
       return data;
     } catch (err) {
@@ -207,20 +225,23 @@ public async createDataRequest(params: {
     }
   }
 
-  // --- Utility methods are now just placeholders in bypass mode ---
-  
   public signPayload(payload: any): string {
-    console.warn("SDK WARNING: signPayload called in bypass mode. Returning dummy signature.");
-    return "dummy-signature-bypassed";
+    const serialized =
+      typeof payload === "string" ? payload : JSON.stringify(payload);
+    return signPayload(serialized, this.privateKey);
   }
 
+  /**
+   * Verify a signature against a payload using the given public key.
+   */
   public verifyPayloadSignature(
     payload: any,
     signature: string,
     publicKey: string
   ): boolean {
-    console.warn("SDK WARNING: verifyPayloadSignature called in bypass mode. Always returning true.");
-    return true;
+    const serialized =
+      typeof payload === "string" ? payload : JSON.stringify(payload);
+    return verifySignature(serialized, signature, publicKey);
   }
 
   private handleApiError(err: unknown, context: string): never {
