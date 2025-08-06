@@ -1,15 +1,11 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig } from "axios";
 import EventEmitter from "events";
-// Assuming you have these in a file named `lib/utilits.ts`
 import { 
   InitializationError, 
   RequestError 
 } from "./lib/errors";
-import { 
-  delay, 
-  signPayload, 
-  verifySignature 
-} from "./lib/utilits"; 
+// We no longer need the real signing functions for the bypass
+// import { signPayload, verifySignature } from "./lib/utilits"; 
 
 // --- Interfaces ---
 
@@ -50,11 +46,12 @@ export interface TrustBrokerClientOptions {
   };
 }
 
-// --- TrustBrokerClient Class ---
+// --- TrustBrokerClient Class (Bypass Version) ---
 
 export class TrustBrokerClient extends EventEmitter {
   private clientId: string;
-  private privateKey: string;
+  // REMOVED: privateKey is not needed in bypass mode.
+  // private privateKey: string;
   private http: AxiosInstance;
   private logger?: TrustBrokerClientOptions["logger"];
 
@@ -63,30 +60,27 @@ export class TrustBrokerClient extends EventEmitter {
 
     this.logger = options?.logger ?? undefined;
 
-    const { TB_CLIENT_ID, TB_PRIVATE_KEY, TB_BROKER_URL } = process.env;
+    // THE BYPASS: We only need the Client ID and Broker URL. Keys are ignored.
+    const { TB_CLIENT_ID, TB_BROKER_URL } = process.env;
 
-    if (!TB_CLIENT_ID || !TB_PRIVATE_KEY) {
-      throw new InitializationError("Missing credentials in .env");
+    if (!TB_CLIENT_ID) {
+      throw new InitializationError("Missing TB_CLIENT_ID in .env for bypass mode");
     }
 
     this.clientId = TB_CLIENT_ID;
-    // The private key from .env is Base64 encoded; decode it to PEM string
-    this.privateKey = Buffer.from(TB_PRIVATE_KEY, "base64").toString("utf8");
+    // REMOVED: No need to load or decode the private key.
+    // this.privateKey = Buffer.from(TB_PRIVATE_KEY, "base64").toString("utf8");
 
     const baseURL = (TB_BROKER_URL || "https://broker.trustbroker.io").replace(/\/+$/, "");
     this.http = axios.create({ baseURL });
 
-    // Axios Interceptor for M2M Authentication
+    // THE BYPASS: The interceptor now only adds the Client-Id.
+    // All signature logic has been removed.
     this.http.interceptors.request.use((config: InternalAxiosRequestConfig) => {
       config.headers = config.headers ?? {};
       config.headers["Client-Id"] = this.clientId;
       
-      // If the request has a body, sign it and add the signature header.
-      if (config.data) {
-        // This relies on the `signPayload` function in `lib/utilits.ts`
-        const signature = signPayload(config.data, this.privateKey);
-        config.headers["Signature"] = signature;
-      }
+      // The `Signature` header is no longer added.
       
       return config;
     });
@@ -118,7 +112,6 @@ export class TrustBrokerClient extends EventEmitter {
 
   public async getPublicKey(): Promise<string> {
     try {
-      // This is the platform's public key, if needed for verification purposes
       const { data } = await this.http.get("/system/public-key");
       return data;
     } catch (err) {
@@ -138,7 +131,6 @@ export class TrustBrokerClient extends EventEmitter {
     requestId: string;
     status: string;
   }> {
-    // Construct the clean payload object
     const payload = {
       providerId: params.providerId,
       dataOwnerId: params.dataOwnerId,
@@ -147,7 +139,8 @@ export class TrustBrokerClient extends EventEmitter {
     };
 
     try {
-      // The interceptor handles signing this payload and adding the headers.
+      // The interceptor will add the Client-Id header. No signature is sent.
+      // This will work because the backend `m2m-auth` middleware is also in bypass mode.
       const { data } = await this.http.post("/requests", payload);
       return data;
     } catch (err) {
@@ -155,9 +148,6 @@ export class TrustBrokerClient extends EventEmitter {
     }
   }
 
-  /**
-   * Get status of a specific data request.
-   */
   public async getRequestStatus(
     requestId: string
   ): Promise<RequestStatusResponse> {
@@ -175,37 +165,23 @@ export class TrustBrokerClient extends EventEmitter {
     mySignature: string,
     providerEndpoint: string
   ): Promise<ProviderDataResponse> {
-    // The body for the request to the provider
     const body = {
       requesterId: this.clientId,
       platformSignature,
       requestId,
-      signature: mySignature,
+      signature: mySignature, // This signature is for provider auth, not broker auth
     };
 
     try {
-      // POST to the provider directly (not via the broker's HTTP instance)
       const { data } = await axios.post<ProviderDataResponse>(
-        providerEndpoint,
-        body,
-        {
-          headers: {
-            "Content-Type": "application/json",
-          },
-        }
+        providerEndpoint, body, { headers: { "Content-Type": "application/json" } }
       );
       return data;
     } catch (err) {
       if (axios.isAxiosError(err) && err.response) {
-        throw new RequestError(
-          "PROVIDER_ERROR",
-          `requestDataFromProvider: ${err.response.data?.error || err.message}`
-        );
+        throw new RequestError("PROVIDER_ERROR", `requestDataFromProvider: ${err.response.data?.error || err.message}`);
       }
-      throw new RequestError(
-        "UNKNOWN",
-        `requestDataFromProvider: ${(err as Error).message}`
-      );
+      throw new RequestError("UNKNOWN", `requestDataFromProvider: ${(err as Error).message}`);
     }
   }
 
@@ -216,7 +192,6 @@ export class TrustBrokerClient extends EventEmitter {
     platformSignature: string,
     requesterSignature: string
   ): Promise<CompleteRequestResponse> {
-    // The body for the broker's endpoint
     const body = {
       providerId,
       providerSignature,
@@ -226,8 +201,7 @@ export class TrustBrokerClient extends EventEmitter {
 
     try {
       const { data } = await this.http.post<CompleteRequestResponse>(
-        `/requests/${requestId}/requester-signature`,
-        body
+        `/requests/${requestId}/requester-signature`, body
       );
       return data;
     } catch (err) {
@@ -235,25 +209,20 @@ export class TrustBrokerClient extends EventEmitter {
     }
   }
 
-  /**
-   * Utility method to sign a payload (used internally by the interceptor).
-   */
+  // --- Utility methods are now just placeholders in bypass mode ---
+  
   public signPayload(payload: any): string {
-    const serialized = typeof payload === "string" ? payload : JSON.stringify(payload);
-    return signPayload(serialized, this.privateKey);
+    console.warn("SDK WARNING: signPayload called in bypass mode. Returning dummy signature.");
+    return "dummy-signature-bypassed";
   }
 
-  /**
-   * Utility method to verify a signature (used internally or by clients).
-   */
   public verifyPayloadSignature(
     payload: any,
     signature: string,
     publicKey: string
   ): boolean {
-    const serialized = typeof payload === "string" ? payload : JSON.stringify(payload);
-    // This relies on the `verifySignature` in `lib/utilits.ts`
-    return verifySignature(serialized, signature, publicKey);
+    console.warn("SDK WARNING: verifyPayloadSignature called in bypass mode. Always returning true.");
+    return true;
   }
 
   private handleApiError(err: unknown, context: string): never {
