@@ -122,9 +122,9 @@ export class TrustBrokerClient extends EventEmitter {
   /**
    * Initiates a new data request with the Trust Broker.
    */
-  public async createDataRequest(params: {
+public async createDataRequest(params: {
     providerId: string;
-    dataOwnerId: string;
+    dataOwnerId: string; // This is the user's externalId
     schemaId: string;
     expiresIn?: number;
   }): Promise<{
@@ -139,8 +139,6 @@ export class TrustBrokerClient extends EventEmitter {
     };
 
     try {
-      // The interceptor will add the Client-Id header. No signature is sent.
-      // This will work because the backend `m2m-auth` middleware is also in bypass mode.
       const { data } = await this.http.post("/requests", payload);
       return data;
     } catch (err) {
