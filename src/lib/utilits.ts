@@ -34,16 +34,28 @@ export function delay(ms: number): Promise<void> {
   return new Promise((res) => setTimeout(res, ms));
 }
 
+function sortKeys(obj: any): any {
+  if (Array.isArray(obj)) return obj.map(sortKeys);
+  if (obj && typeof obj === "object") {
+    return Object.keys(obj).sort().reduce((acc: any, k) => {
+      acc[k] = sortKeys(obj[k]);
+      return acc;
+    }, {});
+  }
+  return obj;
+}
 /**
  * Signs a payload using a private key.
  * Returns the Base64-encoded signature.
  */
-export function signPayload(payload: object|string, privateKeyPem: string): string {
-  const canonical = JSON.stringify(payload, Object.keys(payload).sort());
-  const signer = crypto.createSign('RSA-SHA256');
+export function signPayload(payload: object | string, privateKeyPem: string): string {
+  const canonical = typeof payload === "string"
+    ? payload
+    : JSON.stringify(sortKeys(payload));
+  const signer = crypto.createSign("RSA-SHA256");
   signer.update(canonical);
   signer.end();
-  return signer.sign(privateKeyPem, 'base64');
+  return signer.sign(privateKeyPem, "base64");
 }
 
 
@@ -51,11 +63,16 @@ export function signPayload(payload: object|string, privateKeyPem: string): stri
  * Verifies a payload's signature using a public key.
  */
 
-export function verifySignature( payload: object|string, signature: string, publicKey: string) {
-  const canonical = JSON.stringify(payload, Object.keys(payload).sort());
-  const verifier = crypto.createVerify('RSA-SHA256');
+export function verifySignature(
+  payload: object | string,
+  signature: string,
+  publicKeyPem: string
+): boolean {
+  const canonical = typeof payload === "string"
+    ? payload
+    : JSON.stringify(sortKeys(payload));
+  const verifier = crypto.createVerify("RSA-SHA256");
   verifier.update(canonical);
   verifier.end();
-  const publicKeyPem = Buffer.from(publicKey, 'base64').toString('utf8');
-  return verifier.verify(publicKeyPem, signature, 'base64');
+  return verifier.verify(publicKeyPem, signature, "base64");
 }
